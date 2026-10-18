@@ -1,175 +1,221 @@
 import os
-import streamlit as st
+import ast
+import operator
+from pathlib import Path
+
 from dotenv import load_dotenv
-from pypdf import PdfReader
-
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from langchain.agents import create_agent
 
-# Load environment variables
+from ddgs import DDGS
+
 load_dotenv()
 
-# Page configuration
-st.set_page_config(
-    page_title="Document Q&A Assistant",
-    page_icon="📚",
-    layout="centered"
-)
-
-st.title("📚 Document Q&A Assistant")
-st.write("Upload a PDF and ask questions based on its content.")
-
-# Get Gemini API key
+# Initialize Gemini
 api_key = os.getenv("GEMINI_API_KEY")
 
 if not api_key:
-    st.error("GEMINI_API_KEY is missing. Check your .env file.")
-    st.stop()
+    raise ValueError("GEMINI_API_KEY missing. Add it to your .env file.")
 
-# Upload PDF
-uploaded_file = st.file_uploader(
-    "Upload a PDF document",
-    type=["pdf"]
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3.1-flash-lite-preview",
+    google_api_key=api_key,
+    temperature=0,
 )
 
-if uploaded_file is not None:
+# ---------------- CALCULATOR TOOL ----------------
+
+@tool
+def calculator(expression: str) -> str:
+    """Calculate basic mathematical expressions safely."""
+
+    allowed_operators = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: operator.pow,
+        ast.USub: operator.neg,
+        ast.UAdd: operator.pos,
+    }
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            return node.value
+
+        if isinstance(node, ast.BinOp):
+            op_type = type(node.op)
+
+            if op_type not in allowed_operators:
+                raise ValueError("Unsupported operator")
+
+            left = evaluate(node.left)
+            right = evaluate(node.right)
+
+            if op_type is ast.Pow and abs(right) > 10:
+                raise ValueError("Exponent too large")
+
+            return allowed_operators[op_type](left, right)
+
+        if isinstance(node, ast.UnaryOp):
+            op_type = type(node.op)
+
+            if op_type not in allowed_operators:
+                raise ValueError("Unsupported operator")
+
+            return allowed_operators[op_type](evaluate(node.operand))
+
+        raise ValueError("Invalid mathematical expression")
 
     try:
-        # Read PDF
-        reader = PdfReader(uploaded_file)
-        documents = []
+        tree = ast.parse(expression, mode="eval")
+        return str(evaluate(tree.body))
+    except Exception as error:
+        return f"Calculation error: {error}"
 
-        for page_number, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
 
-            if text.strip():
-                documents.append({
-                    "text": text,
-                    "page": page_number
-                })
+# ---------------- WEB SEARCH TOOL ----------------
 
-        if not documents:
-            st.error(
-                "No readable text found. "
-                "Please upload a text-based PDF."
-            )
-            st.stop()
+@tool
+def web_search(query: str) -> str:
+    """Search the web using DuckDuckGo."""
 
-        # Split text into chunks
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=150
-        )
+    try:
+        results = DDGS().text(query, max_results=5)
 
-        chunks = []
+        if not results:
+            return "No search results found."
 
-        for document in documents:
-            for chunk in splitter.split_text(document["text"]):
-                chunks.append({
-                    "text": chunk,
-                    "page": document["page"]
-                })
+        formatted_results = []
 
-        st.info("Processing PDF with local embeddings...")
+        for index, result in enumerate(results, start=1):
+            title = result.get("title", "No title")
+            body = result.get("body", "No description")
+            url = result.get("href", "")
 
-        # Local embeddings - no Gemini embedding API needed
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-
-        # Create vector database
-        vector_store = Chroma.from_texts(
-            texts=[chunk["text"] for chunk in chunks],
-            embedding=embeddings,
-            metadatas=[
-                {"page": chunk["page"]}
-                for chunk in chunks
-            ]
-        )
-
-        st.success(
-            f"PDF processed successfully! "
-            f"{len(chunks)} text chunks created."
-        )
-
-        # Ask a question
-        question = st.text_input(
-            "Ask a question about your PDF"
-        )
-
-        if question:
-
-            # Retrieve relevant chunks
-            results = vector_store.similarity_search(
-                question,
-                k=min(4, len(chunks))
+            formatted_results.append(
+                f"{index}. {title}\n"
+                f"Description: {body}\n"
+                f"URL: {url}"
             )
 
-            context = "\n\n".join(
-                f"[Page {item.metadata['page']}]\n"
-                f"{item.page_content}"
-                for item in results
-            )
-
-            # Prompt template
-            prompt = ChatPromptTemplate.from_template("""
-You are a helpful document question-answering assistant.
-
-Answer using ONLY the provided document context.
-Do not invent facts.
-
-If the answer is not in the context, say:
-"The uploaded document does not contain enough information."
-
-Mention the relevant page numbers in your answer.
-
-Document context:
-{context}
-
-Question:
-{question}
-
-Answer:
-""")
-
-            # Gemini generates the answer
-            try:
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-3.1-flash-lite-preview",
-                    google_api_key=api_key,
-                    temperature=0
-                )
-
-                chain = prompt | llm
-
-                with st.spinner("Generating answer..."):
-                    response = chain.invoke({
-                        "context": context,
-                        "question": question
-                    })
-
-                st.subheader("Answer")
-                st.write(response.content)
-
-                # Show retrieved source pages
-                st.subheader("Retrieved source pages")
-
-                pages = sorted({
-                    item.metadata["page"]
-                    for item in results
-                })
-
-                st.write(", ".join(map(str, pages)))
-
-            except Exception as error:
-                st.error(
-                    "Could not generate the answer. "
-                    f"Please check your Gemini API quota and model. "
-                    f"Details: {error}"
-                )
+        return "\n\n".join(formatted_results)
 
     except Exception as error:
-        st.error(f"PDF processing failed: {error}")
+        return f"Web search error: {error}"
+
+
+# ---------------- LOCAL FILE READER TOOL ----------------
+
+@tool
+def read_local_file(filename: str) -> str:
+    """Read a text file from the current project directory only."""
+
+    try:
+        base_directory = Path.cwd().resolve()
+        file_path = (base_directory / filename).resolve()
+
+        if not file_path.is_relative_to(base_directory):
+            return "Access denied: files outside the project directory are not allowed."
+
+        if not file_path.is_file():
+            return f"File not found: {filename}"
+
+        if file_path.suffix.lower() not in {
+            ".txt", ".md", ".py", ".json", ".csv", ".log"
+        }:
+            return "Unsupported file type. Use a text, Markdown, Python, JSON, CSV, or log file."
+
+        if file_path.stat().st_size > 1_000_000:
+            return "File is too large to read (maximum 1 MB)."
+
+        return file_path.read_text(encoding="utf-8", errors="replace")
+
+    except Exception as error:
+        return f"File reading error: {error}"
+
+
+# ---------------- CREATE AI AGENT ----------------
+
+tools = [calculator, web_search, read_local_file]
+
+agent = create_agent(
+    model=llm,
+    tools=tools,
+    system_prompt=(
+        "You are a helpful multi-tool AI assistant. "
+        "Use the calculator for mathematical calculations, "
+        "web_search for web research, and read_local_file to read "
+        "files in the current project directory. "
+        "Use tools when necessary and provide clear, accurate answers. "
+        "Never claim you used a tool if you did not."
+    ),
+)
+
+
+# ---------------- RUN AGENT ----------------
+
+def main():
+    print("=" * 50)
+    print("MULTI-TOOL AUTONOMOUS AI AGENT")
+    print("=" * 50)
+    print("Available tools: Calculator, Web Search, Local File Reader")
+    print("Type 'exit' to quit.")
+    print()
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+
+            if user_input.lower() in {"exit", "quit"}:
+                print("Agent: Goodbye!")
+                break
+
+            if not user_input:
+                continue
+
+            print("\nAgent: Working...\n")
+
+            response = agent.invoke({
+                "messages": [
+                    {"role": "user", "content": user_input}
+                ]
+            })
+
+            messages = response.get("messages", [])
+            final_answer = None
+
+            for message in reversed(messages):
+                if getattr(message, "type", "") == "ai":
+                    if getattr(message, "tool_calls", None):
+                        continue
+
+                    content = getattr(message, "content", "")
+
+                    if isinstance(content, str):
+                        final_answer = content
+                    elif isinstance(content, list):
+                        final_answer = "\n".join(
+                            item.get("text", "")
+                            for item in content
+                            if isinstance(item, dict)
+                        )
+
+                    if final_answer:
+                        break
+
+            print(f"Agent: {final_answer or 'No response received.'}\n")
+
+        except KeyboardInterrupt:
+            print("\nAgent stopped.")
+            break
+
+        except Exception as error:
+            print(f"Error: {error}\n")
+
+
+if __name__ == "__main__":
+    main()
