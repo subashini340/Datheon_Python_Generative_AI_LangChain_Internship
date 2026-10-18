@@ -1,6 +1,14 @@
-# Task 1: Structured LLM JSON Extractor
+# Structured LLM Prompt Pipeline & JSON Extractor
 
-A Python application that uses Google Gemini to extract structured information from resume text and return validated JSON using Pydantic.
+## Overview
+A Python-based AI project that extracts structured
+information from resume text using Google's Gemini API.
+
+## Features
+- LLM-based information extraction
+- Structured JSON output
+- Pydantic data validation
+- Secure API key management using environment variables
 
 ## Technologies
 - Python
@@ -8,13 +16,11 @@ A Python application that uses Google Gemini to extract structured information f
 - Pydantic
 - python-dotenv
 
-## Features
-- Extracts structured information from resumes.
-- Validates the output using Pydantic.
-- Uses environment variables to protect the API key.
+## How to Run
+1. Install dependencies:
+   pip install google-genai python-dotenv pydantic
 
-## Run
-Install dependencies and run:
+2. Add your Gemini API key to the `.env` file.
 
-```bash
-python main.py
+3. Run:
+   python main.py
