@@ -1,27 +1,32 @@
-# Task 2: Document Q&A RAG Assistant
+# 🤖 Multi-Tool Autonomous AI Agent
 
-A Python-based AI application that allows users to upload PDF documents and ask questions about their content using Retrieval-Augmented Generation (RAG).
+An AI agent built using Python, LangChain, and Google Gemini. It can autonomously select and use tools to solve user queries.
 
-## Technologies
+## 🚀 Features
+
+- 🧮 **Calculator Tool:** Performs mathematical calculations safely.
+- 🌐 **Web Search Tool:** Searches the web using DuckDuckGo.
+- 📂 **Local File Reader:** Reads supported text files from the project directory.
+- 🤖 **AI Agent:** Uses Google Gemini and LangChain to select appropriate tools.
+- 💬 **Interactive Console:** Accepts user queries and displays responses.
+
+## 🛠️ Technologies Used
+
 - Python
-- Streamlit
-- LangChain
 - Google Gemini API
-- Hugging Face Embeddings
-- ChromaDB
-- PyPDF
+- LangChain
+- DuckDuckGo Search (`ddgs`)
+- Python AST module
 
-## Features
-- Upload PDF documents.
-- Extract and split PDF text into chunks.
-- Generate embeddings using Hugging Face.
-- Retrieve relevant document chunks.
-- Generate answers using Google Gemini.
-- Display answers based on the uploaded document.
+## 📋 Prerequisites
 
-## Installation
+- Python 3.10 or later
+- Google Gemini API key
 
-Install the required packages:
+## ⚙️ Installation
+
+### 1. Clone the repository
 
 ```bash
-pip install -r requirements.txt
+git clone YOUR_GITHUB_REPOSITORY_URL
+cd project3
